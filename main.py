@@ -11,7 +11,7 @@ api = FastAPI()
 
 api.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # change to ["http://localhost:3000"] in production
+    allow_origins=["https://finguard-746989509626.asia-southeast2.run.app"],  # change to ["http://localhost:3000"] in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
