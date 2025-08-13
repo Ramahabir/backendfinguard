@@ -5,6 +5,7 @@ from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage,AIMessage, SystemMessage
 from typing import TypedDict
 
+
 dotenv.load_dotenv()
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
@@ -128,7 +129,37 @@ Do not click on links or share sensitive information in response to unsolicited 
 
 Your explanations should be clear, concise, and focused on educating the recipient about scam tactics and prevention.
 """
+system_message_language = """ 
+You are an AI model designed to classify the **language** of a given scam message. Your task is to analyze the content of the message and identify which language it is written in from the predefined list of supported languages. If the language cannot be identified or is not in the list, classify it as **Unknown**.
 
+### Supported Languages:
+- **en**: English  
+- **id**: Bahasa Indonesia  
+- **jv**: Javanese  
+- **su**: Sundanese  
+- **km**: Khmer  
+- **nan**: Hokkien (Min-nan)  
+
+### Instructions:
+1. **Analyze the Message Content**:
+   - Review the full text of the scam message.
+   - Detect the language based on linguistic patterns, vocabulary, and grammar.
+
+2. **Classify the Language**:
+   - Compare the message with the predefined list of languages.
+   - If the message contains mixed languages, classify it based on the predominant language.
+   - If the language cannot be determined from the message, classify it as **Unknown**.
+
+3. **Response Format**:
+   - Provide the language code corresponding to the identified language:  
+     - **en** for English  
+     - **id** for Bahasa Indonesia  
+     - **jv** for Javanese  
+     - **su** for Sundanese  
+     - **km** for Khmer  
+     - **nan** for Hokkien (Min-nan)  
+     - **Unknown** if the language cannot be identified or is not in the list.
+"""
 
 model = init_chat_model("gemini-2.5-flash", model_provider="google-genai")
 
@@ -144,6 +175,17 @@ model = init_chat_model("gemini-2.5-flash", model_provider="google-genai")
 #         ↓
 # [ add_contact_info ]
 
+def detect_language(state:AgentState) -> AgentState:
+    prompt_msgs = [
+        SystemMessage(content=system_message_language),
+        HumanMessage(content=state["messages"])
+    ]
+    response = model.invoke(prompt_msgs)
+
+    # Extract plain text from AIMessage
+    state["language"] = response.content.strip()
+    return state   
+ 
 def classify_risk(state: AgentState) -> AgentState:
     prompt_msgs = [
         SystemMessage(content=system_message_classify),
@@ -177,24 +219,58 @@ def generate_explanation(state: AgentState) -> AgentState:
     state["explanation"] = response.content.strip()
     return state
 
+def translate_explanation(state: AgentState) -> AgentState:
+   language = state["language"]
+   if language == "en":
+      return state
 
+   prompt_msgs = [
+       SystemMessage(content=f"You are AI Model that translate the explanation generate into the user language: {language}"),
+       HumanMessage(content=state["explanation"])
+   ]
+   response = model.invoke(prompt_msgs)
 
+   state["explanation"] = response.content.strip()
+   return state
+
+# Build Graph
 graph = StateGraph(AgentState)
 
 graph.add_node("classify_risk", classify_risk)
 graph.add_node("detect_scam_type", detect_scam_type)
 graph.add_node("generate_explanation", generate_explanation)
+graph.add_node("detect_language", detect_language)
+graph.add_node("translate_explanation", translate_explanation)
 
-graph.add_edge(START, "classify_risk")
+
+graph.add_edge(START, "detect_language")
+graph.add_edge("detect_language", "classify_risk")
 graph.add_edge("classify_risk", "detect_scam_type")
 graph.add_edge("detect_scam_type", "generate_explanation")
-graph.add_edge("generate_explanation", END)
+graph.add_edge("generate_explanation", "translate_explanation")
+graph.add_edge("translate_explanation", END)
 
 app = graph.compile()
 
-# result = app.invoke({
-#     "messages": "Congratulations! You've won a free iPhone! Click here to claim your prize",
-#     "language": "en",
-# })
+result = app.invoke({
+    "messages": """
+   [INFO PENTING – MOHON DIBACA]
 
-# print(result)
+Selamat siang, Bapak/Ibu. Kami dari PT Global Mega Artha ingin menginformasikan bahwa nomor Anda terpilih sebagai penerima hadiah uang tunai senilai Rp175.000.000,- melalui program undian pelanggan setia.
+
+Hadiah ini TIDAK memerlukan pembelian apapun, namun demi keamanan proses pencairan, Anda diwajibkan segera melakukan verifikasi data pribadi (Nama Lengkap, Alamat, No. KTP, dan Nama Bank).
+
+Mohon untuk segera menghubungi Hotline Resmi kami di +62 812-XXX-XXXX atau membalas pesan ini. Proses verifikasi hanya berlaku hingga hari ini pukul 18.00 WIB.
+
+Jika Bapak/Ibu tidak mengkonfirmasi sebelum waktu tersebut, hadiah akan dialihkan ke pemenang cadangan.
+
+Terima kasih atas perhatian Anda.
+Hormat kami,
+PT GLOBAL MEGA ARTHA
+Program Undian Pelanggan Setia 2025
+
+NB: Pesan ini bersifat rahasia dan hanya ditujukan kepada penerima yang sah. Dilarang menyebarkan informasi ini kepada pihak lain. 
+   """
+})
+
+print(result)
